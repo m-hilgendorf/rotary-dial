@@ -1,0 +1,143 @@
+#use-added-syntax(jitx)
+defpackage rotary-dial:
+  import core
+  import collections
+  import math
+  import jitx
+  import jitx/commands
+  import ocdb/defaults
+  import ocdb/generator-utils
+  import ocdb/land-patterns
+  import ocdb/box-symbol
+  import ocdb/generic-components
+
+pcb-landpattern SNAP-IN-POT:
+  pad p[1]: pth-pad(0.5) at loc(-2.5, -7.5) 
+  pad p[2]: pth-pad(0.5) at loc( 0.0, -7.5)
+  pad p[3]: pth-pad(0.5) at loc( 2.5, -7.5)
+  pad p[4]: pth-pad(0.5) at loc( 2.5,  7.0)
+  pad p[5]: pth-pad(0.5) at loc(-2.5,  7.0)
+  
+  layer(Cutout()) = Rectangle(2.0, 2.8, loc(13.2 * 0.5 - 1.0, 0.0))
+  layer(Cutout()) = Rectangle(2.0, 2.8, loc(-13.2 * 0.5 + 1.0, 0.0))
+  layer(Silkscreen("f-silk", Top)) = LineRectangle(12.5, 13.4)
+  layer(Silkscreen("f-silk", Top)) = to-polygon(Circle(3.0), 32)
+
+pcb-component PEC11R: 
+  manufacturer = "Bourns"
+  mpn = "PEC11R-4220K-S0024"
+  description = "24 Step Rotary Encoder"
+  pin-properties:
+    [pin:Ref | pads:Int ... | side:Dir]
+    [a       | 1     | Left  ]
+    [c       | 2     | Down  ]
+    [b       | 3     | Right ]
+  make-box-symbol()
+  assign-landpattern(SNAP-IN-POT)
+
+pcb-landpattern LED-2020:
+  pad vdd : smd-pad(0.7, 0.7) at loc(0.5 * 1.13 + 0.35,  0.5 * 0.4 + 0.35)
+  pad dout: smd-pad(0.7, 0.7) at loc(0.5 * 1.13 + 0.35, -0.5 * 0.4 - 0.35)
+  pad din : smd-pad(0.7, 0.7) at loc(-0.5 * 1.13 - 0.35,  0.5 * 0.4 + 0.35)
+  pad vss : smd-pad(0.7, 0.7) at loc(-0.5 * 1.13 - 0.35, -0.5 * 0.4 - 0.35)
+  layer(Courtyard(Top)) = Rectangle(2.1, 2.1)
+  layer(Silkscreen("f-silk", Top)) = LineRectangle(2.0, 2.0)
+  
+pcb-landpattern LED-5050:
+  ; https://datasheet.lcsc.com/szlcsc/Worldsemi-WS2812B-B_C114586.pdf
+  val inner-width = 3.4
+  val outer-height = 4.2
+
+  pad vdd  : smd-pad(1.5, 1.0) at loc(-1.7 - 0.75,  2.1 - 0.5) 
+  pad vss  : smd-pad(1.5, 1.0) at loc( 1.7 + 0.75, -2.1 + 0.5)
+  pad din  : smd-pad(1.5, 1.0) at loc( 1.7 + 0.75,  2.1 - 0.5)
+  pad dout : smd-pad(1.5, 1.0) at loc(-1.7 - 0.75, -2.1 + 0.5)
+  layer(Courtyard(Top)) = Rectangle(5.25, 5.25)
+  layer(Silkscreen("f-silk", Top)) = LineRectangle(5.0, 5.0)
+  layer(Silkscreen("f-silk", Top)) = to-polygon(Circle(1.75), 20)
+
+pcb-component WS2812C-2020 : 
+  description = "Addressable RGB 5050 LED"
+  pin-properties:
+    [pin:Ref | pads:Ref ...   | side:Dir]
+    [vdd     | vdd            | Left    ]
+    [dout    | dout           | Left    ]
+    [din     | din            | Right   ]
+    [vss     | vss            | Right   ]
+  make-box-symbol()
+  assign-landpattern(LED-2020)
+
+pcb-module LED (vss-via?:True|False, vdd-via?:True|False):
+  pin vdd
+  pin vss
+  pin din
+  pin dout
+  inst D1: WS2812C-2020
+  net VDD (vdd, D1.vdd)
+  net VSS (vss, D1.vss)
+  net (din, D1.din)
+  net (dout, D1.dout)
+  if vdd-via?:
+    geom(VDD):
+      via(LayerIndex(0, Top), LayerIndex(0, Bottom), radius = 0.3, hole-radius = 0.125) at Point(1.7, 0.55) 
+  if vss-via?:
+    geom(VSS):
+      via(LayerIndex(0), LayerIndex(0, Bottom), radius = 0.3, hole-radius = 0.125) at Point(-1.7, -0.55)
+  place(D1) at loc(0.0, 0.0) on Top
+
+pcb-module led-ring (
+  num-leds: Int,  ; number of LEDs in the ring
+  radius: Double, ; inner radius of the lED ring 
+  max-rotation: Double, ;
+  led-rotation: Double,
+  vss-via?:True|False, 
+  vdd-via?:True|False,
+):
+  pin vdd
+  pin gnd
+  pin din
+  pin dout
+  if max-rotation > 1.0 or max-rotation < 0.0: 
+    fatal("max rotation of LED Ring must be in the range [0.0, 1.0]")
+  val tau = 6.28318530718
+  var dat = din
+
+  for n in 0 to num-leds do:
+    val angle = tau * max-rotation * to-double(n) / to-double(num-leds - 1)
+    val x = radius * cos(angle)
+    val y = radius * sin(angle)
+    inst led: LED(vss-via?, vdd-via?)
+    net (led.vdd vdd)
+    net (led.vss gnd)
+    net (led.din dat)
+    if n == (num-leds - 1):
+      net (led.dout dout)
+    dat = led.dout
+    val rotation = 360.0 * (led-rotation + angle / tau)
+    place(led) at loc(x, y, rotation) on Top
+
+pcb-module RotaryEncoder:
+  pin vdd
+  pin gnd
+  pin a
+  pin b
+  pin c
+  inst enc: PEC11R
+  net (a, enc.a)
+  net (b, enc.b)
+  net (c, enc.c)
+
+pcb-module main-module:
+  inst inner-leds: led-ring(20, 12.0, 0.75, 0.5, true, true)
+  inst outer-leds: led-ring(28, 16.0, 0.75, 0.0, false, true)
+  inst encoder: PEC11R
+  
+  place(inner-leds) at loc(0.0, 0.0, -45.0) on Top
+  place(outer-leds) at loc(0.0, 0.0, -45.0) on Top
+  place(encoder) at loc(0.0, 0.0) on Top
+
+val design = make-default-board(main-module, 2, 38.0, 38.0)
+set-export-board?(true)
+set-export-schematic?(true)
+set-export-backend(`kicad)
+view-board(false)

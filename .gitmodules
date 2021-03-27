@@ -1,0 +1,3 @@
+[submodule "ocdb"]
+	path = ocdb
+	url = git@github.com:JITx-Inc/open-components-database.git
